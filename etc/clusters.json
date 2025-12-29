@@ -5,24 +5,35 @@
             "endpoints": [
                 {
                     "address": "127.0.0.1",
-                    "port": 10001
+                    "port": 8000
                 },
                 {
                     "address": "127.0.0.2",
-                    "port": 10001
-                }
-            ]
-        },
-        {
-            "name": "outbound|10001||qwen3",
-            "endpoints": [
-                {
-                    "address": "127.0.0.1",
-                    "port": 10001
+                    "port": 8000
                 },
                 {
-                    "address": "127.0.0.2",
-                    "port": 10001
+                    "address": "127.0.0.3",
+                    "port": 8000
+                },
+                {
+                    "address": "127.0.0.4",
+                    "port": 8000
+                },
+                {
+                    "address": "127.0.0.5",
+                    "port": 8000
+                },
+                {
+                    "address": "127.0.0.6",
+                    "port": 8000
+                },
+                {
+                    "address": "127.0.0.7",
+                    "port": 8000
+                },
+                {
+                    "address": "127.0.0.8",
+                    "port": 8000
                 }
             ]
         }

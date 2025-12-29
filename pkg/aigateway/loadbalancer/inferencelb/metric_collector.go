@@ -39,14 +39,15 @@ type EndpointStatsWrapper struct {
 	CacheStats    *EndpointCacheStats
 	Host          types.Host
 
-	RequestLoad  float64
-	PrefillLoad  float64
-	CacheHitRate float64
-	Score        float64
+	RequestLoad         float64
+	PrefillLoad         float64
+	CacheHitRate        float64
+	ConsistentHashBonus float64
+	Score               float64
 }
 
 func (e *EndpointStatsWrapper) String() string {
 	host := fmt.Sprintf(`{"ip":"%s","port":%d}`, e.Host.Ip(), e.Host.Port())
-	load := fmt.Sprintf(`{"cache_radio":%f, "request_load":%f, "prefill_load":%f, "score":%f}`, e.CacheHitRate, e.RequestLoad, e.PrefillLoad, e.Score)
+	load := fmt.Sprintf(`{"cache_radio":%f, "request_load":%f, "prefill_load":%f, "ch_bonus":%f, "score":%f}`, e.CacheHitRate, e.RequestLoad, e.PrefillLoad, e.ConsistentHashBonus, e.Score)
 	return fmt.Sprintf("EndpointStatsWrapper{Host: %s, EndpointStats: %s, Stats: %s}", host, e.EndpointStats, load)
 }

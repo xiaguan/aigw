@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/envoyproxy/envoy/contrib/golang/common/go/api"
+	"github.com/stathat/consistent"
 	filtermanager "mosn.io/htnn/api/pkg/filtermanager/api"
 
 	"github.com/aigw-project/aigw/pkg/aigateway/loadbalancer/manager"
@@ -52,15 +53,17 @@ const (
 	KeyModelName      pkgcommon.LBCtxKey = "lb.modelName"
 	KeyTraceId        pkgcommon.LBCtxKey = "lb.traceId"
 	KeyPromptHash     pkgcommon.LBCtxKey = "lb.promptHash"
+	KeyPromptPrefixForCH pkgcommon.LBCtxKey = "lb.promptPrefixForCH"
 	KeyHostMatchInfo  pkgcommon.LBCtxKey = "lb.hostMatchInfo"
 	KeyLbSelector     pkgcommon.LBCtxKey = "lb.selector"
 
-	KeyLoadAwareEnable   pkgcommon.LBCtxKey = "lb.load_aware_enable"
-	KeyCacheAwareEnable  pkgcommon.LBCtxKey = "lb.cache_aware_enable"
-	KeyCandidatePercent  pkgcommon.LBCtxKey = "lb.candidate_percent"
-	KeyCacheRatioWeight  pkgcommon.LBCtxKey = "lb.cache_ratio_weight"
-	KeyLoadRequestWeight pkgcommon.LBCtxKey = "lb.request_load_weight"
-	KeyLoadPrefillWeight pkgcommon.LBCtxKey = "lb.prefill_load_weight"
+	KeyLoadAwareEnable      pkgcommon.LBCtxKey = "lb.load_aware_enable"
+	KeyCacheAwareEnable     pkgcommon.LBCtxKey = "lb.cache_aware_enable"
+	KeyCandidatePercent     pkgcommon.LBCtxKey = "lb.candidate_percent"
+	KeyCacheRatioWeight     pkgcommon.LBCtxKey = "lb.cache_ratio_weight"
+	KeyLoadRequestWeight    pkgcommon.LBCtxKey = "lb.request_load_weight"
+	KeyLoadPrefillWeight    pkgcommon.LBCtxKey = "lb.prefill_load_weight"
+	KeyConsistentHashWeight pkgcommon.LBCtxKey = "lb.consistent_hash_weight"
 
 	KeyCacheDuration = "cache_duration"
 	KeyUseMetaCache  = "use_cache"
@@ -71,6 +74,10 @@ const (
 	InferLbCacheRatioWeight  = 2
 	InferLbRequestLoadWeight = 1
 	InferLbPrefillLoadWeight = 3
+
+	// consistent hash config
+	ConsistentHashVirtualNodes = 30
+	ConsistentHashBonus        = 1.5
 )
 
 type inferenceLoadBalancer struct {
@@ -99,6 +106,20 @@ func (lb *inferenceLoadBalancer) ChooseHost(ctx context.Context) types.Host {
 	traceId := pkgcommon.GetValueFromCtx(ctx, KeyTraceId, "")
 	ctx = context.WithValue(ctx, metadata_center.MetaCenterTraceId, traceId)
 
+	// Calculate consistent hash target IP for observability
+	var chTargetIP string
+	promptPrefixKey := pkgcommon.GetValueFromCtx(ctx, KeyPromptPrefixForCH, "")
+	if promptPrefixKey != "" && len(candidateHosts) > 0 {
+		ch := consistent.New()
+		ch.NumberOfReplicas = ConsistentHashVirtualNodes
+		for _, host := range candidateHosts {
+			ch.Add(host.Ip())
+		}
+		if targetHost, err := ch.Get(promptPrefixKey); err == nil {
+			chTargetIP = targetHost
+		}
+	}
+
 	// only use random when cluster's load-aware is set to false, default is true when not set
 	hosts := candidateHosts
 	if isModelLoadAwareEnable(ctx) {
@@ -106,7 +127,27 @@ func (lb *inferenceLoadBalancer) ChooseHost(ctx context.Context) types.Host {
 		hosts = lb.GetCandidateByStats(ctx, clusterName, candidateHosts, candNum)
 	}
 
-	return chooseHosts(hosts, clusterName, traceId)
+	selectedHost := chooseHosts(hosts, clusterName, traceId)
+
+	// Record consistent hash observability fields
+	if selectedHost != nil && chTargetIP != "" {
+		selectedIP := selectedHost.Ip()
+		setLogField(ctx, "ch_selected_ip", selectedIP)
+
+		// Read bonus from config
+		bonus := float64(pkgcommon.GetValueFromCtx(ctx, KeyConsistentHashWeight, float32(ConsistentHashBonus)))
+
+		// Check if consistent hash target matched
+		if selectedIP == chTargetIP {
+			setLogField(ctx, "ch_hit", 1)
+			setLogField(ctx, "ch_bonus", bonus)
+		} else {
+			setLogField(ctx, "ch_hit", 0)
+			setLogField(ctx, "ch_bonus", 0)
+		}
+	}
+
+	return selectedHost
 }
 
 var (
@@ -322,7 +363,7 @@ var (
 	}
 )
 
-func mergeEndpointsStatsWrapperCacheStats(ctx context.Context, load []*EndpointStatsWrapper, cache map[string]*EndpointCacheStats) []*EndpointStatsWrapper {
+func mergeEndpointsStatsWrapperCacheStats(ctx context.Context, load []*EndpointStatsWrapper, cache map[string]*EndpointCacheStats, chTargetIP string) []*EndpointStatsWrapper {
 	var maxQueueSize float64 = 0
 	var minQueueSize float64 = math.MaxFloat64
 	// min prompt length is 1024, prefill time is small when less than 1024, reduce prefill weight
@@ -367,6 +408,7 @@ func mergeEndpointsStatsWrapperCacheStats(ctx context.Context, load []*EndpointS
 
 		stat.RequestLoad = 1.0
 		stat.PrefillLoad = 0.0
+		stat.ConsistentHashBonus = 0.0
 
 		// stat.EndpointStats won't be empty, just for in case
 		if stat.EndpointStats != nil {
@@ -375,8 +417,16 @@ func mergeEndpointsStatsWrapperCacheStats(ctx context.Context, load []*EndpointS
 			stat.PrefillLoad = float64(stat.EndpointStats.PromptLength) / float64(maxPromptLength)
 		}
 
-		// score = W1 * cache_ratio - W2 * request_load - W3 * prefill_load
-		stat.Score = cacheHitWeight*stat.CacheHitRate - requestLoadWeight*stat.RequestLoad - prefillRadioWeight*stat.PrefillLoad
+		// Apply consistent hash bonus
+		if chTargetIP != "" && stat.Host.Ip() == chTargetIP {
+			// Read bonus from config, default to 1.5
+			bonus := float64(pkgcommon.GetValueFromCtx(ctx, KeyConsistentHashWeight, float32(ConsistentHashBonus)))
+			stat.ConsistentHashBonus = bonus
+			api.LogDebugf("consistent hash bonus applied to %s, bonus: %f", chTargetIP, bonus)
+		}
+
+		// score = W1 * cache_ratio - W2 * request_load - W3 * prefill_load + consistent_hash_bonus
+		stat.Score = cacheHitWeight*stat.CacheHitRate - requestLoadWeight*stat.RequestLoad - prefillRadioWeight*stat.PrefillLoad + stat.ConsistentHashBonus
 		res[i] = stat
 	}
 	return res
@@ -401,7 +451,29 @@ func (lb *inferenceLoadBalancer) GetCandidateByStats(ctx context.Context, cluste
 		useCache = 1
 	}
 	setLogField(ctx, KeyUseMetaCache, useCache)
-	stats = mergeEndpointsStatsWrapperCacheStats(ctx, stats, caches)
+
+	// Calculate and store consistent hash target IP before merging stats
+	var chTargetIP string
+	promptPrefixKey := pkgcommon.GetValueFromCtx(ctx, KeyPromptPrefixForCH, "")
+	if promptPrefixKey != "" {
+		ch := consistent.New()
+		ch.NumberOfReplicas = ConsistentHashVirtualNodes
+
+		// Add all hosts to ring
+		for _, stat := range stats {
+			ch.Add(stat.Host.Ip())
+		}
+
+		// Find target
+		targetHost, err := ch.Get(promptPrefixKey)
+		if err == nil {
+			chTargetIP = targetHost
+			api.LogDebugf("consistent hash target IP: %s for key: %s", chTargetIP, promptPrefixKey)
+			setLogField(ctx, "ch_target_ip", chTargetIP)
+		}
+	}
+
+	stats = mergeEndpointsStatsWrapperCacheStats(ctx, stats, caches, chTargetIP)
 	slices.SortFunc(stats, CompareEndpointStatsWrapperWithCache)
 
 	if api.GetLogLevel() <= api.Info {

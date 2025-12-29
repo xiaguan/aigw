@@ -78,10 +78,21 @@ static_resources:
                                             protocol: openai
                                             algorithm: inference_lb
                                             model_mapping_rule:
-                                              qwen3:
+                                              deepseek/deepseek-v3-0324:
                                                 rules:
                                                   - backend: sglang
                                                     cluster: qwen3.service
+                                            lb_mapping_rule:
+                                              deepseek/deepseek-v3-0324:
+                                                load_aware_enable: true
+                                                cache_aware_enable: true
+                                                candidate_percent: 50
+                                                request_load_weight: 1
+                                                prefill_load_weight: 3
+                                                cache_radio_weight: 0
+                                                consistent_hash_weight: 1.5
+                                            log:
+                                              enabled: false
 
     - name: listener_backend
       address:

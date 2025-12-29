@@ -16,6 +16,7 @@ package llmproxy
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -132,6 +133,12 @@ func (f *filter) SaveKVCache(header api.ResponseHeaderMap) {
 }
 
 func (f *filter) setPromptsContext(ctx context.Context) context.Context {
+	// Always pass prompt prefix key for consistent hashing
+	if f.promptPrefixKey != "" {
+		ctx = context.WithValue(ctx, inferencelb.KeyPromptPrefixForCH, f.promptPrefixKey)
+		api.LogDebugf("prompt prefix key set to context, model name: %s, key: %s", f.modelName, f.promptPrefixKey)
+	}
+
 	if f.isModelCacheAwareEnable() {
 		ctx = context.WithValue(ctx, inferencelb.KeyPromptHash, f.promptHash)
 		api.LogInfof("prompt hash set to context, model name: %s, prompt hash: %v", f.modelName, f.promptHash)
@@ -153,6 +160,7 @@ func (f *filter) setLoadBalanceConfig(ctx context.Context, modelName string) con
 		ctx = context.WithValue(ctx, inferencelb.KeyLoadRequestWeight, int(ruleConfig.RequestLoadWeight))
 		ctx = context.WithValue(ctx, inferencelb.KeyLoadPrefillWeight, int(ruleConfig.PrefillLoadWeight))
 		ctx = context.WithValue(ctx, inferencelb.KeyCacheRatioWeight, int(ruleConfig.CacheRadioWeight))
+		ctx = context.WithValue(ctx, inferencelb.KeyConsistentHashWeight, ruleConfig.ConsistentHashWeight)
 	}
 	return ctx
 }
@@ -183,6 +191,20 @@ func (f *filter) PromptDataHash(promptContext *transcoder.PromptMessageContext) 
 		return
 	}
 	f.promptLength = len(promptContext.PromptContent)
+
+	// Calculate prompt prefix key for consistent hashing
+	// Use first 4096 bytes (~1024 tokens) as routing key
+	const maxPrefixLen = 4096
+	prefixLen := min(len(promptContext.PromptContent), maxPrefixLen)
+	if prefixLen > 0 {
+		h := NewHash(&HashConfig{
+			ChunkLen: prefixLen,
+		})
+		prefixHashes := h.PromptToHash(promptContext.PromptContent[:prefixLen])
+		if len(prefixHashes) > 0 {
+			f.promptPrefixKey = fmt.Sprintf("%d", prefixHashes[0])
+		}
+	}
 
 	if !f.isModelCacheAwareEnable() {
 		api.LogDebugf("model cache aware is not enable, model name: %s", f.modelName)

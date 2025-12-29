@@ -170,14 +170,12 @@ start-aigw-xds:
 start-aigw-local:
 	@echo "using ${MC_HOST} as Metadata Center Host"
 	docker run --entrypoint /bin/bash --name dev_aigw --rm -d \
+		--network host \
 		-e AIGW_META_DATA_CENTER_HOST=${MC_HOST} \
 		-e AIGW_META_DATA_CENTER_PORT=${MC_PORT} \
 		-v $(PWD)/etc/envoy-local.yaml:/etc/envoy.yaml \
 		-v $(PWD)/etc/clusters.json:/etc/aigw/static_clusters.json \
 		-v $(PWD)/libgolang.so:/usr/local/envoy/libgolang.so \
-		-p 10000:10000 \
-		-p 10001:10001 \
-		-p 15000:15000 \
 		${PROXY_IMAGE} \
 		-c "envoy -c /etc/envoy.yaml --log-level ${LOG_LEVEL}"
 

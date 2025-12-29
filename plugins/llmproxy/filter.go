@@ -77,6 +77,7 @@ type filter struct {
 	cluster               string
 	promptLength          int
 	promptHash            []uint64
+	promptPrefixKey       string // for consistent hash routing
 	hitRadio              int
 	isIncreaseRecorded    bool
 	isPromptLengthDeleted bool

@@ -57,6 +57,15 @@ var (
 	}
 )
 
+// LegacyCompletionRequest represents the legacy /v1/completions API request
+type LegacyCompletionRequest struct {
+	Model       string      `json:"model"`
+	Prompt      interface{} `json:"prompt"` // can be string or []string
+	Stream      bool        `json:"stream,omitempty"`
+	MaxTokens   int         `json:"max_tokens,omitempty"`
+	Temperature float64     `json:"temperature,omitempty"`
+}
+
 type openAiChatCompletionTranscoder struct {
 	commonTranscoder
 
@@ -89,18 +98,48 @@ func NewOpenAITranscoder(callbacks api.FilterCallbackHandler, config *cfg.LLMPro
 
 func (t *openAiChatCompletionTranscoder) GetRequestData(headers api.RequestHeaderMap, data []byte) (reqData *transcoder.RequestData, err error) {
 	t.logItems.SetRequest(data)
-	if err = sonic.Unmarshal(data, &t.openAiChatMessage); err != nil {
-		return
-	}
 
-	if len(t.openAiChatMessage.Messages) == 0 {
-		err = errors.New("messages is empty")
-		return
-	}
+	// Check if this is a legacy /v1/completions request
+	path := headers.Path()
+	isLegacyCompletion := strings.Contains(path, "/v1/completions") && !strings.Contains(path, "/v1/chat/completions")
 
-	if t.openAiChatMessage.Model == "" {
-		err = errors.New("model is empty")
-		return
+	if isLegacyCompletion {
+		// Handle legacy completions API with prompt field
+		var legacyReq LegacyCompletionRequest
+		if err = sonic.Unmarshal(data, &legacyReq); err != nil {
+			return
+		}
+
+		if legacyReq.Model == "" {
+			err = errors.New("model is empty")
+			return
+		}
+
+		if legacyReq.Prompt == nil {
+			err = errors.New("prompt is empty")
+			return
+		}
+
+		// Convert legacy prompt to messages format
+		err = t.convertLegacyPromptToMessages(legacyReq)
+		if err != nil {
+			return
+		}
+	} else {
+		// Handle standard chat completions API
+		if err = sonic.Unmarshal(data, &t.openAiChatMessage); err != nil {
+			return
+		}
+
+		if len(t.openAiChatMessage.Messages) == 0 {
+			err = errors.New("messages is empty")
+			return
+		}
+
+		if t.openAiChatMessage.Model == "" {
+			err = errors.New("model is empty")
+			return
+		}
 	}
 
 	reqData = &transcoder.RequestData{}
@@ -132,6 +171,58 @@ func (t *openAiChatCompletionTranscoder) GetRequestData(headers api.RequestHeade
 	t.logItems.ModelName = reqData.ModelName
 	api.LogDebugf("reqData: %+v", reqData)
 	return
+}
+
+// convertLegacyPromptToMessages converts legacy completions prompt to chat messages format
+func (t *openAiChatCompletionTranscoder) convertLegacyPromptToMessages(legacyReq LegacyCompletionRequest) error {
+	// Initialize the chat message with model and other params
+	t.openAiChatMessage.Model = legacyReq.Model
+	t.openAiChatMessage.Stream = legacyReq.Stream
+
+	if legacyReq.MaxTokens > 0 {
+		t.openAiChatMessage.MaxTokens = openaigo.Int(int64(legacyReq.MaxTokens))
+	}
+	if legacyReq.Temperature != 0 {
+		t.openAiChatMessage.Temperature = openaigo.Float(legacyReq.Temperature)
+	}
+
+	// Convert prompt to messages array
+	var prompts []string
+	switch v := legacyReq.Prompt.(type) {
+	case string:
+		prompts = []string{v}
+	case []interface{}:
+		prompts = make([]string, len(v))
+		for i, p := range v {
+			if str, ok := p.(string); ok {
+				prompts[i] = str
+			} else {
+				return fmt.Errorf("invalid prompt format: expected string, got %T", p)
+			}
+		}
+	case []string:
+		prompts = v
+	default:
+		return fmt.Errorf("unsupported prompt type: %T", v)
+	}
+
+	// Convert each prompt to a user message
+	messages := make([]openaigo.ChatCompletionMessageParamUnion, len(prompts))
+	for i, promptText := range prompts {
+		userMsg := openaigo.ChatCompletionUserMessageParam{
+			Content: openaigo.ChatCompletionUserMessageParamContentUnion{
+				OfString: openaigo.String(promptText),
+			},
+		}
+		userMsg.Role = "user" // Set role directly as string
+		messages[i] = openaigo.ChatCompletionMessageParamUnion{
+			OfUser: &userMsg,
+		}
+	}
+
+	t.openAiChatMessage.Messages = messages
+	api.LogDebugf("converted legacy completion prompt to %d messages", len(messages))
+	return nil
 }
 
 func (t *openAiChatCompletionTranscoder) EncodeRequest(modelName, backendProtocol string, headers api.RequestHeaderMap,

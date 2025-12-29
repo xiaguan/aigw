@@ -42,6 +42,7 @@ message LBConfig{
   int32 request_load_weight = 4;
   int32 prefill_load_weight = 5;
   int32 cache_radio_weight = 6;
+  float consistent_hash_weight = 7 [(validate.rules).float = {gte: 0}];
 }
 
 message Rule {

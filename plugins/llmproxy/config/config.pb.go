@@ -169,12 +169,13 @@ type LBConfig struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	LoadAwareEnable   bool  `protobuf:"varint,1,opt,name=load_aware_enable,json=loadAwareEnable,proto3" json:"load_aware_enable,omitempty"`
-	CacheAwareEnable  bool  `protobuf:"varint,2,opt,name=cache_aware_enable,json=cacheAwareEnable,proto3" json:"cache_aware_enable,omitempty"`
-	CandidatePercent  int32 `protobuf:"varint,3,opt,name=candidate_percent,json=candidatePercent,proto3" json:"candidate_percent,omitempty"`
-	RequestLoadWeight int32 `protobuf:"varint,4,opt,name=request_load_weight,json=requestLoadWeight,proto3" json:"request_load_weight,omitempty"`
-	PrefillLoadWeight int32 `protobuf:"varint,5,opt,name=prefill_load_weight,json=prefillLoadWeight,proto3" json:"prefill_load_weight,omitempty"`
-	CacheRadioWeight  int32 `protobuf:"varint,6,opt,name=cache_radio_weight,json=cacheRadioWeight,proto3" json:"cache_radio_weight,omitempty"`
+	LoadAwareEnable      bool    `protobuf:"varint,1,opt,name=load_aware_enable,json=loadAwareEnable,proto3" json:"load_aware_enable,omitempty"`
+	CacheAwareEnable     bool    `protobuf:"varint,2,opt,name=cache_aware_enable,json=cacheAwareEnable,proto3" json:"cache_aware_enable,omitempty"`
+	CandidatePercent     int32   `protobuf:"varint,3,opt,name=candidate_percent,json=candidatePercent,proto3" json:"candidate_percent,omitempty"`
+	RequestLoadWeight    int32   `protobuf:"varint,4,opt,name=request_load_weight,json=requestLoadWeight,proto3" json:"request_load_weight,omitempty"`
+	PrefillLoadWeight    int32   `protobuf:"varint,5,opt,name=prefill_load_weight,json=prefillLoadWeight,proto3" json:"prefill_load_weight,omitempty"`
+	CacheRadioWeight     int32   `protobuf:"varint,6,opt,name=cache_radio_weight,json=cacheRadioWeight,proto3" json:"cache_radio_weight,omitempty"`
+	ConsistentHashWeight float32 `protobuf:"fixed32,7,opt,name=consistent_hash_weight,json=consistentHashWeight,proto3" json:"consistent_hash_weight,omitempty"`
 }
 
 func (x *LBConfig) Reset() {
@@ -247,6 +248,13 @@ func (x *LBConfig) GetPrefillLoadWeight() int32 {
 func (x *LBConfig) GetCacheRadioWeight() int32 {
 	if x != nil {
 		return x.CacheRadioWeight
+	}
+	return 0
+}
+
+func (x *LBConfig) GetConsistentHashWeight() float32 {
+	if x != nil {
+		return x.ConsistentHashWeight
 	}
 	return 0
 }
